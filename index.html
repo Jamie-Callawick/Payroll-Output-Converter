@@ -318,7 +318,7 @@
 
     .leave-config { margin-top: 16px; }
     .leave-config.disabled { opacity: .45; pointer-events: none; }
-    .leave-config input[type=text] { width: 90px; font-family: var(--mono); text-transform: uppercase; }
+    .leave-config input[type=text] { width: 170px; font-family: var(--mono); }
     .leave-config input[type=checkbox] { width: 15px; height: 15px; accent-color: var(--navy); cursor: pointer; }
     .unit-tag { font-size: 11px; font-weight: 700; border-radius: 4px; padding: 2px 6px; background: var(--navy-light); color: var(--navy); }
     .unit-tag.mixed { background: var(--warn-bg); color: var(--warn); }
@@ -579,7 +579,7 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
             <div class="toggle-box">✓</div>
             <div>
               <div class="toggle-label">Include leave balances</div>
-              <div class="toggle-desc">Adds Leave - Balance Owing + Leave - Type Code, one row per leave type per employee</div>
+              <div class="toggle-desc">Creates a separate leave balance file — one row per employee, one column per leave type (same layout as the Leave Balance Converter)</div>
             </div>
           </label>
           <label class="transform-option checked" id="opt-leave-skipzero" onclick="toggleOpt(this, event)">
@@ -587,7 +587,15 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
             <div class="toggle-box">✓</div>
             <div>
               <div class="toggle-label">Skip zero or empty balances</div>
-              <div class="toggle-desc">Don't create leave rows for 0 balances (blank balances are always skipped)</div>
+              <div class="toggle-desc">Leave the balance blank when it is 0</div>
+            </div>
+          </label>
+          <label class="transform-option checked hidden" id="opt-leave-anniv" onclick="toggleOpt(this, event)">
+            <input type="checkbox" checked>
+            <div class="toggle-box">✓</div>
+            <div>
+              <div class="toggle-label">Include leave anniversary dates</div>
+              <div class="toggle-desc">Adds a "Leave Anniversary Date - [column]" column after each leave type, from the IMS entitlement due date (dd/MM/yyyy)</div>
             </div>
           </label>
         </div>
@@ -722,6 +730,16 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
         </div>
       </div>
 
+      <div class="card hidden" id="leavePreviewCard">
+        <div class="section-header">
+          <div class="section-title">Leave balance file preview <span class="badge badge-muted" id="leavePreviewCount"></span></div>
+          <div class="preview-filter-bar"><span style="font-size:12px;color:var(--gray-500)">Showing first 50 rows</span></div>
+        </div>
+        <div class="table-wrap preview-wrap">
+          <table class="data preview"><thead id="leavePreviewHead"></thead><tbody id="leavePreviewBody"></tbody></table>
+        </div>
+      </div>
+
       <div class="action-bar">
         <button class="btn btn-secondary" onclick="goToPanel(3)">← Back</button>
         <button class="btn btn-primary" onclick="goToPanel(5); buildExport()">Continue → Download</button>
@@ -733,7 +751,7 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
       <div class="card success-block">
         <span class="success-icon" id="exportIcon">✅</span>
         <h2 id="exportTitle">Ready to download</h2>
-        <p>Your staff import file is ready to load into Simplifi.</p>
+        <p id="exportDesc">Your staff import file is ready to load into Simplifi.</p>
 
         <div class="export-issues hidden" id="exportIssuesBox">
           <h4 id="exportIssuesTitle">⚠ Validation issues found</h4>
@@ -742,13 +760,16 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
 
         <div class="success-stats">
           <div class="success-stat"><div class="n" id="exportStaff">—</div><div class="l">Staff records</div></div>
-          <div class="success-stat"><div class="n" id="exportRows">—</div><div class="l">Import rows</div></div>
+          <div class="success-stat hidden" id="exportLeaveStat"><div class="n" id="exportLeaveRows">—</div><div class="l">Leave records</div></div>
           <div class="success-stat"><div class="n" id="exportCols">—</div><div class="l">Columns</div></div>
           <div class="success-stat hidden" id="exportLeaverStat"><div class="n" id="exportLeavers">—</div><div class="l">Leavers excluded</div></div>
           <div class="success-stat hidden" id="exportErrStat"><div class="n vn-error" id="exportErrCount">—</div><div class="l">Rows with issues</div></div>
         </div>
 
-        <button class="btn btn-primary" id="btnDownload" style="font-size:15px;padding:14px 32px;">⬇&nbsp; Download Simplifi CSV</button>
+        <div style="display:flex;gap:12px;justify-content:center;flex-wrap:wrap">
+          <button class="btn btn-primary" id="btnDownload" style="font-size:15px;padding:14px 32px;">⬇&nbsp; Download staff import CSV</button>
+          <button class="btn btn-primary hidden" id="btnDownloadLeave" style="font-size:15px;padding:14px 32px;">⬇&nbsp; Download leave balances CSV</button>
+        </div>
 
         <div class="divider"></div>
         <button class="btn btn-secondary" onclick="goToPanel(4)">← Review preview</button>
@@ -808,7 +829,7 @@ const SPECIAL_TARGETS = {
   SPLIT_STREET:        { label: '✂ Split → Street Number + Street Name', outputs: ['Street Number','Street Name'] },
   SPLIT_TOWN_POSTCODE: { label: '✂ Split "TOWN, 1234" → Town/City + Post Code', outputs: ['Town/City','Post Code'] },
   FINISH_DATE_STATUS:  { label: '✂ Finish date → Last Date Employment + Is Active', outputs: ['Pay Roll - Last Date Employment','Is Active Employee'] },
-  LEAVE_BALANCE:       { label: '🏖 Leave balance (one row per leave type)', outputs: ['Leave - Balance Owing','Leave - Type Code'] },
+  LEAVE_BALANCE:       { label: '🏖 Leave balance (separate leave file)', outputs: [] },
 };
 function specialOptionsHTML(selected) {
   return Object.entries(SPECIAL_TARGETS).map(([k, s]) =>
@@ -836,6 +857,27 @@ const IMS_LEAVE = [
   { field: 'CL Outstanding',  code: 'CL',  label: 'Company Leave outstanding' },
   { field: 'SVL Outstanding', code: 'SVL', label: 'Service Leave outstanding' },
 ];
+
+// Same as the Leave Balance Converter: the IMS entitlement due date for a balance
+// becomes "Leave Anniversary Date - <column>" in the leave file.
+const IMS_ANNIV = {
+  'AL Balance': 'AL Ent Due Date', 'AL Accrued': 'AL Ent Due Date', 'AL in Advance': 'AL Ent Due Date',
+  'AL Outstanding': 'AL Ent Due Date', 'SL Balance': 'SL Ent Due Date', 'FVL Balance': 'FVL Ent Due Date',
+  'CL Outstanding': 'CL Ent Due Date',
+};
+// Column order used by the Leave Balance Converter's IMS output
+const IMS_LEAVE_ORDER = ['AL Balance','AL Accrued','AL in Advance','AL Outstanding','PL Outstanding','SL Balance',
+  'FVL Balance','AH Balance','TIL Balance','CL Outstanding','SVL Outstanding'];
+const ANNIV_PREFIX = 'Leave Anniversary Date - ';
+function annivSourceFor(col) { const a = IMS_ANNIV[col]; return a && csvHeaders.includes(a) ? a : null; }
+function fmtAnnivDate(v) {
+  const m = normaliseDate(String(v ?? '')).match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  return m ? `${m[1].padStart(2, '0')}/${m[2].padStart(2, '0')}/${m[3]}` : '';
+}
+function leaveColumnOrder(cols) {
+  const rank = c => { const i = IMS_LEAVE_ORDER.indexOf(c); return i >= 0 ? i : 1000 + csvHeaders.indexOf(c); };
+  return [...cols].sort((a, b) => rank(a) - rank(b));
+}
 
 // ─── Source-format presets ─────────────────────────────────────────────────
 const PRESETS = [
@@ -920,7 +962,10 @@ let mappings = [];       // [{sourceCol, targetCol, confidence}]
 let mappingSource = '';  // 'preset:<name>' | 'builtin'
 let activePreset = null;
 let leaveCodes = {};     // sourceCol → Leave - Type Code
-let outputRows = [];     // final rows (one per staff member per leave type)
+let outputRows = [];     // final staff rows (one per staff member)
+let leaveHeaders = [];   // leave file columns: Employee Code + one per leave type (+ anniversary dates)
+let leaveRows = [];      // leave file rows (one per staff member)
+let leaveNoCode = 0;     // staff left out of the leave file for having no Employee Code
 let usedHeaders = [];
 let staffCount = 0;
 let excludedLeavers = 0;
@@ -1182,9 +1227,7 @@ function runMapping() {
   handleSetupOnMapping();
 }
 function defaultLeaveCode(col) {
-  const ims = IMS_LEAVE.find(l => l.field === col);
-  if (ims) return ims.code;
-  return String(col).replace(/\s*(balance|owing|outstanding)\s*$/i, '').trim().toUpperCase().slice(0, 20);
+  return String(col).trim();   // keep the payroll field name, as the Leave Balance Converter does
 }
 
 function renderMappingTable() {
@@ -1297,8 +1340,8 @@ function leaveIssues() {
   const byCode = {};
   included.forEach(c => { const code = (leaveCodes[c] || '').trim(); (byCode[code] = byCode[code] || []).push(c); });
   Object.entries(byCode).forEach(([code, cols]) => {
-    if (!code) issues.push({ sev: 'error', msg: `Leave type code is blank for: ${cols.join(', ')}.` });
-    else if (cols.length > 1) issues.push({ sev: 'warn', msg: `${cols.join(' and ')} both use leave code "${code}" — staff will get two ${code} rows. AL Balance already includes outstanding and accrued leave.` });
+    if (!code) issues.push({ sev: 'error', msg: `Leave file column name is blank for: ${cols.join(', ')}.` });
+    else if (code === 'Employee Code' || cols.length > 1) issues.push({ sev: 'error', msg: `${cols.join(' and ')} would both go to the leave file column "${code}" — give each a different column name.` });
   });
   included.forEach(c => {
     const { units } = leaveStats(c);
@@ -1311,6 +1354,7 @@ function renderLeaveConfig() {
   const cands = leaveCandidates();
   const on = optEnabled('opt-leave');
   wrap.classList.toggle('disabled', !on);
+  show('opt-leave-anniv', on && cands.some(c => annivSourceFor(c)));
   if (!cands.length) {
     wrap.innerHTML = `<div class="info-box" style="margin:0">No leave balance columns were found. To include leave, map a balance column to <strong>🏖 Leave balance</strong> on the previous step.</div>`;
     return;
@@ -1335,11 +1379,11 @@ function renderLeaveConfig() {
   wrap.innerHTML = `
     <div class="table-wrap">
       <table class="data">
-        <thead><tr><th>Include</th><th>Balance column</th><th>Leave - Type Code</th><th>Units (from file)</th><th>Staff with a balance</th></tr></thead>
+        <thead><tr><th>Include</th><th>Balance column</th><th>Leave file column</th><th>Units (from file)</th><th>Staff with a balance</th></tr></thead>
         <tbody>${rows}</tbody>
       </table>
     </div>
-    <div style="font-size:12px;color:var(--gray-500);margin-top:8px;line-height:1.5">Leave type codes must match the leave type codes set up for your payroll in Simplifi — edit them here if yours differ. Balances are exported exactly as they appear in your file (in the units shown).</div>
+    <div style="font-size:12px;color:var(--gray-500);margin-top:8px;line-height:1.5">Leave goes in its own file: Employee Code plus one column per leave type, the same layout as the Leave Balance Converter. Column names default to the field names in your payroll file. Balances are exported exactly as they appear in your file (in the units shown).</div>
     ${issues.map(i => `<div class="status show ${i.sev === 'error' ? 'error' : 'warn'}">⚠ ${esc(i.msg)}</div>`).join('')}`;
 }
 function toggleLeaveCol(col, checked) {
@@ -1352,7 +1396,7 @@ function toggleLeaveCol(col, checked) {
 }
 let leaveCodeTimer = null;
 function setLeaveCode(col, val) {
-  leaveCodes[col] = val.trim().toUpperCase();
+  leaveCodes[col] = val.trim();
   clearTimeout(leaveCodeTimer);
   leaveCodeTimer = setTimeout(() => {
     // re-render issues only, keep focus in the input
@@ -1478,12 +1522,15 @@ function buildOutputRows() {
       if (out['Pay Roll - Pay Rate'] && !out['Pay Roll - Pay Rate Valid From Date']) out['Pay Roll - Pay Rate Valid From Date'] = rateFrom;
     }
 
-    const leave = [];
+    // Leave balances, keyed by source column (blank when skipped, like the Leave Balance Converter)
+    const leave = {};
     leaveMaps.forEach(m => {
       const raw = cleanNumber(row[m.sourceCol]);
-      if (raw === '') return;                                   // blank balances are always skipped
-      if (skipZero && !isNaN(parseFloat(raw)) && parseFloat(raw) === 0) return;
-      leave.push({ code: (leaveCodes[m.sourceCol] || '').trim().toUpperCase(), bal: raw });
+      const isZero = raw === '' || (!isNaN(parseFloat(raw)) && parseFloat(raw) === 0);
+      const bal = (skipZero && isZero) ? '' : raw;
+      leave[m.sourceCol] = bal;
+      const ac = annivSourceFor(m.sourceCol);
+      if (ac) leave[ANNIV_PREFIX + m.sourceCol] = bal === '' ? '' : fmtAnnivDate(row[ac]);
     });
     return { out, leave, marker: row.__marker };
   });
@@ -1504,16 +1551,29 @@ function buildOutputRows() {
   }
   staffCount = kept.length;
 
-  // One row per staff member per leave type; full details repeated on every row
-  const anyLeave = kept.some(s => s.leave.length);
-  if (anyLeave) { headerSet.add('Leave - Balance Owing'); headerSet.add('Leave - Type Code'); }
-  outputRows = [];
-  kept.forEach((s, si) => {
-    if (!s.leave.length) { outputRows.push(Object.assign({}, s.out, { __staff: si, __extra: false })); return; }
-    s.leave.forEach((l, li) => outputRows.push(Object.assign({}, s.out, {
-      'Leave - Balance Owing': l.bal, 'Leave - Type Code': l.code, __staff: si, __extra: li > 0
-    })));
-  });
+  // Staff file: one row per staff member, no leave columns
+  outputRows = kept.map((s, si) => Object.assign({}, s.out, { __staff: si }));
+
+  // Leave file (Leave Balance Converter layout): Employee Code + one column per
+  // leave type, each followed by its anniversary date when that option is on
+  leaveHeaders = []; leaveRows = []; leaveNoCode = 0;
+  if (leaveMaps.length) {
+    const withAnniv = optEnabled('opt-leave-anniv');
+    const cols = [];   // [output header, key in s.leave]
+    leaveColumnOrder(leaveMaps.map(m => m.sourceCol)).forEach(c => {
+      const name = (leaveCodes[c] || c).trim();
+      cols.push([name, c]);
+      if (withAnniv && annivSourceFor(c)) cols.push([ANNIV_PREFIX + name, ANNIV_PREFIX + c]);
+    });
+    leaveHeaders = ['Employee Code', ...cols.map(c => c[0])];
+    kept.forEach(s => {
+      const code = String(s.out['Employee Code'] || '').trim();
+      if (!code) { leaveNoCode++; return; }
+      const r = { 'Employee Code': code };
+      cols.forEach(([h, k]) => { r[h] = s.leave[k] ?? ''; });
+      leaveRows.push(r);
+    });
+  }
 
   // Output columns in Simplifi template order
   usedHeaders = TARGET_HEADERS.filter(h => headerSet.has(h));
@@ -1647,11 +1707,34 @@ function runValidation() {
   const notices = [];
   if (excludedLeavers) notices.push({ sev: 'info', msg: `${excludedLeavers} leaver${excludedLeavers!==1?'s':''} excluded (finish date today or earlier, or inactive in IMS).` });
   if (optEnabled('opt-leave')) leaveIssues().forEach(i => notices.push({ sev: i.sev === 'error' ? 'error' : 'warn', msg: i.msg }));
+  if (leaveNoCode) notices.push({ sev: 'warn', msg: `${leaveNoCode} staff member${leaveNoCode!==1?'s are':' is'} left out of the leave file because they have no Employee Code.` });
+  const badBal = leaveBadCells();
+  if (badBal.length) notices.push({ sev: 'error', msg: `${badBal.length} leave balance${badBal.length!==1?'s are':' is'} not a number (highlighted in the leave preview).` });
   document.getElementById('previewNotices').innerHTML = notices.map(n => `<div class="status show ${n.sev}">${n.sev === 'info' ? 'ℹ' : '⚠'} ${esc(n.msg)}</div>`).join('');
 
   const hasIssues = errorRows > 0 || warnRows > 0;
   show('filterErrors', hasIssues); show('filterValid', hasIssues);
   return { errorRows, warnRows, okRows };
+}
+
+// Leave file cells whose balance isn't a plain number → "row|header"
+function leaveBadCells() {
+  const bad = [];
+  leaveRows.forEach((r, i) => leaveHeaders.forEach(h => {
+    if (h === 'Employee Code' || h.startsWith(ANNIV_PREFIX)) return;
+    const v = String(r[h] ?? '').trim();
+    if (v && !/^-?\d+(\.\d+)?$/.test(v)) bad.push(i + '|' + h);
+  }));
+  return bad;
+}
+function renderLeavePreview() {
+  show('leavePreviewCard', leaveHeaders.length > 0);
+  if (!leaveHeaders.length) return;
+  const bad = new Set(leaveBadCells());
+  document.getElementById('leavePreviewCount').textContent = `${leaveRows.length} staff · ${leaveHeaders.length} columns`;
+  document.getElementById('leavePreviewHead').innerHTML = '<tr>' + leaveHeaders.map(h => `<th>${esc(h)}</th>`).join('') + '</tr>';
+  document.getElementById('leavePreviewBody').innerHTML = leaveRows.slice(0, 50).map((r, i) =>
+    '<tr>' + leaveHeaders.map(h => `<td class="${bad.has(i + '|' + h) ? 'cell-error' : ''}">${esc(r[h] ?? '')}</td>`).join('') + '</tr>').join('');
 }
 
 function setFilter(f) {
@@ -1681,11 +1764,12 @@ function buildPreview() {
   buildOutputRows();
   document.getElementById('previewHead').innerHTML = '<tr>' + usedHeaders.map(h => `<th>${esc(h)}</th>`).join('') + '</tr>';
   document.getElementById('previewRowCount').textContent =
-    `${staffCount} staff · ${outputRows.length} import row${outputRows.length!==1?'s':''}` +
+    `${staffCount} staff` +
     (excludedLeavers ? ` · ${excludedLeavers} leaver${excludedLeavers!==1?'s':''} excluded` : '');
   show('valSummary');
   runValidation();
   setFilter('all');
+  renderLeavePreview();
 }
 
 // ─── Export ────────────────────────────────────────────────────────────────
@@ -1695,7 +1779,13 @@ function buildExport() {
   const issueRows = errorRows + warnRows;
 
   document.getElementById('exportStaff').textContent = staffCount.toLocaleString();
-  document.getElementById('exportRows').textContent  = outputRows.length.toLocaleString();
+  const hasLeave = leaveHeaders.length > 0;
+  document.getElementById('exportLeaveRows').textContent = leaveRows.length.toLocaleString();
+  show('exportLeaveStat', hasLeave);
+  show('btnDownloadLeave', hasLeave);
+  document.getElementById('exportDesc').textContent = hasLeave
+    ? 'Your staff import and leave balance files are ready. Import the staff file into Simplifi first, then the leave balance file.'
+    : 'Your staff import file is ready to load into Simplifi.';
   document.getElementById('exportCols').textContent  = usedHeaders.length;
   document.getElementById('exportLeavers').textContent = excludedLeavers;
   show('exportLeaverStat', excludedLeavers > 0);
@@ -1725,18 +1815,19 @@ function buildExport() {
     const s = String(v);
     return (s.includes(',') || s.includes('"') || s.includes('\n')) ? `"${s.replace(/"/g,'""')}"` : s;
   };
-  const lines = [usedHeaders.map(cell).join(',')];
-  outputRows.forEach(row => lines.push(usedHeaders.map(h => cell(row[h])).join(',')));
-  exportCSV = lines.join('\r\n');
-
-  document.getElementById('btnDownload').onclick = () => {
-    const blob = new Blob([exportCSV], { type: 'text/csv;charset=utf-8;' });
+  const toCSV = (headers, rows) => [headers.map(cell).join(','), ...rows.map(row => headers.map(h => cell(row[h])).join(','))].join('\r\n');
+  exportCSV = toCSV(usedHeaders, outputRows);
+  const leaveCSV = hasLeave ? toCSV(leaveHeaders, leaveRows) : '';
+  const base = String(window._loadedFileName || 'staff').replace(/\.(csv|xlsx|xls)$/i, '');
+  const download = (text, name) => {
+    const blob = new Blob([text], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
-    a.href = url;
-    a.download = String(window._loadedFileName || 'staff').replace(/\.(csv|xlsx|xls)$/i, '') + '_simplifi_import.csv';
+    a.href = url; a.download = name;
     a.click(); URL.revokeObjectURL(url);
   };
+  document.getElementById('btnDownload').onclick = () => download(exportCSV, base + '_simplifi_staff_import.csv');
+  document.getElementById('btnDownloadLeave').onclick = () => download(leaveCSV, base + '_simplifi_leave_import.csv');
 }
 
 // ─── Navigation ────────────────────────────────────────────────────────────
@@ -1750,7 +1841,7 @@ function goToPanel(n) {
   window.scrollTo({ top: 0, behavior: 'smooth' });
 }
 function resetTool() {
-  csvRows = []; csvHeaders = []; mappings = []; outputRows = []; exportCSV = ''; activePreset = null; leaveCodes = {};
+  csvRows = []; csvHeaders = []; mappings = []; outputRows = []; leaveHeaders = []; leaveRows = []; exportCSV = ''; activePreset = null; leaveCodes = {};
   window._rawRows = null; window._loadedFileName = null;
   show('uploadInfo', false); show('uploadAction', false); show('headerDetectBox', false);
   document.getElementById('fileStatus').className = 'status';
@@ -1765,7 +1856,7 @@ function resetTool() {
 const SETUP_APP = 'simplifi-payroll-output-converter';
 const SETUP_VERSION = 1;
 const SETUP_STORE_KEY = 'simplifi.payrollOutputConverter.setups';   // namespaced: shares an origin with the Leave app
-const SETUP_OPTION_IDS = ['opt-leave','opt-leave-skipzero','opt-leavers','opt-name','opt-trim','opt-ratedate','opt-date','opt-bool','opt-addr'];
+const SETUP_OPTION_IDS = ['opt-leave','opt-leave-skipzero','opt-leave-anniv','opt-leavers','opt-name','opt-trim','opt-ratedate','opt-date','opt-bool','opt-addr'];
 const SETUP_MATCH_THRESHOLD = 0.8;
 const MAX_SAVED_SETUPS = 25;
 let pendingSetup = null;     // a setup file loaded on the upload step, applied on Continue
@@ -1806,7 +1897,7 @@ function sanitiseSetup(obj) {
   if (obj.mappings && typeof obj.mappings === 'object')
     Object.entries(obj.mappings).forEach(([k, v]) => { const t = v === null ? null : str(v); if (isValidTarget(t)) out.mappings[k] = t; });
   if (obj.leaveCodes && typeof obj.leaveCodes === 'object')
-    Object.entries(obj.leaveCodes).forEach(([k, v]) => { if (typeof v === 'string') out.leaveCodes[k] = v.trim().toUpperCase().slice(0, 20); });
+    Object.entries(obj.leaveCodes).forEach(([k, v]) => { if (typeof v === 'string') out.leaveCodes[k] = v.trim().slice(0, 60); });
   if (obj.options && typeof obj.options === 'object')
     SETUP_OPTION_IDS.forEach(id => { if (typeof obj.options[id] === 'boolean') out.options[id] = obj.options[id]; });
   return out;
@@ -1855,7 +1946,12 @@ function applySetup(setup) {
     else { newCols.push(m.sourceCol); if (m.targetCol) m.confidence = 'medium'; }
   });
   const missing = setup.headers.filter(h => !csvHeaders.includes(h) && setup.mappings[h]);
-  Object.entries(setup.leaveCodes).forEach(([k, v]) => { if (csvHeaders.includes(k)) leaveCodes[k] = v; });
+  Object.entries(setup.leaveCodes).forEach(([k, v]) => {
+    if (!csvHeaders.includes(k)) return;
+    // Older setups stored short IMS codes (AL, SL…) — the leave file now uses the field name
+    const ims = IMS_LEAVE.find(l => l.field === k);
+    leaveCodes[k] = (ims && v.toUpperCase() === ims.code) ? k : v;
+  });
   Object.entries(setup.options).forEach(([id, on]) => setOpt(id, on));
   document.getElementById('rateFromDate').value =
     setup.rateDateMode === 'fixed' && setup.rateFromDate ? setup.rateFromDate : todayISO();
