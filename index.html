@@ -490,6 +490,11 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
             IMS / MYOB
             <div class="provider-soon">Employee export (CSV / XLS)</div>
           </div>
+          <div class="provider-btn" data-provider="bamboohr" onclick="selectProvider(this)">
+            <div class="provider-icon">🟢</div>
+            BambooHR
+            <div class="provider-soon">Employee report (XLSX / CSV)</div>
+          </div>
           <div class="provider-btn" data-provider="other" onclick="selectProvider(this)">
             <div class="provider-icon">📋</div>
             Other payroll system
@@ -610,7 +615,7 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
             <div class="toggle-box">✓</div>
             <div>
               <div class="toggle-label">Exclude leavers</div>
-              <div class="toggle-desc">Drop staff whose finish date (Last Date Employment) is today or earlier, or who are marked inactive in IMS</div>
+              <div class="toggle-desc">Drop staff whose finish date (Last Date Employment) is today or earlier, or who are marked inactive (IMS) or terminated (BambooHR)</div>
             </div>
           </label>
           <label class="transform-option checked" id="opt-name" onclick="toggleOpt(this, event)">
@@ -829,6 +834,8 @@ const SPECIAL_TARGETS = {
   SPLIT_STREET:        { label: '✂ Split → Street Number + Street Name', outputs: ['Street Number','Street Name'] },
   SPLIT_TOWN_POSTCODE: { label: '✂ Split "TOWN, 1234" → Town/City + Post Code', outputs: ['Town/City','Post Code'] },
   FINISH_DATE_STATUS:  { label: '✂ Finish date → Last Date Employment + Is Active', outputs: ['Pay Roll - Last Date Employment','Is Active Employee'] },
+  EMPLOYMENT_STATUS:   { label: '✂ Employment status → Is Active (Terminated/Inactive = FALSE)', outputs: ['Is Active Employee'] },
+  SPLIT_DEPARTMENTS:   { label: '✂ Split "A/B" → Department (A|B)', outputs: ['Department'] },
   LEAVE_BALANCE:       { label: '🏖 Leave balance (separate leave file)', outputs: [] },
 };
 function specialOptionsHTML(selected) {
@@ -909,12 +916,56 @@ const PRESETS = [
       // child support and leave entitlement/settings columns.
     },
     leave: IMS_LEAVE,
+    banner: 'Sensitive columns (IRD number, bank account, birth date, gender, KiwiSaver) are skipped. Leave balances are set up in the next step.',
+  },
+  {
+    id: 'bamboohr',
+    name: 'BambooHR employee report',
+    article: 'a',
+    // BambooHR reports are custom, so columns vary — match on any 4 of its standard field names
+    signature: ['Employment Status','Division','Location','Job Title','Hire Date','Home Email','Work Email',
+      'Employee #','Mobile Phone','Termination Date','Pay Schedule'],
+    minMatch: 4,
+    map: headers => {
+      const has = h => headers.includes(h);
+      return {
+        'Employee #':        ['Employee Code', 'high'],
+        'Employee Number':   ['Employee Code', 'high'],
+        'First Name':        ['First Name', 'high'],
+        'Last Name':         ['Last Name', 'high'],
+        'Work Email':        ['Email Address', 'high'],
+        // Home Email is the main address when the report has no Work Email
+        'Home Email':        has('Work Email') ? ['Email Address (Alternative)', 'high'] : ['Email Address', 'high'],
+        'Mobile Phone':      ['Phone', 'high'],
+        'Address Line 1':    ['SPLIT_STREET', 'high'],
+        'Address Line 2':    ['Suburb', 'medium'],
+        'City':              ['Town/City', 'high'],
+        'State':             ['Region/State', 'medium'],
+        'Province':          ['Region/State', 'medium'],
+        'Zip Code':          ['Post Code', 'high'],
+        'Zipcode':           ['Post Code', 'high'],
+        'Postal Code':       ['Post Code', 'high'],
+        'Country':           ['Country', 'high'],
+        'Job Title':         ['Job Role(s)', 'high'],
+        // Location is the store/site; combined sites ("Milford Merchant/Mi Piaci") become both departments
+        'Location':          ['SPLIT_DEPARTMENTS', 'medium'],
+        ...(has('Location') ? {} : { 'Department': ['Department', 'medium'] }),
+        'Employment Status': ['EMPLOYMENT_STATUS', 'high'],
+        'Status':            ['EMPLOYMENT_STATUS', 'high'],
+        'Termination Date':  ['FINISH_DATE_STATUS', 'high'],
+        'Pay Schedule':      ['Pay Roll - Calendar', 'medium'],
+        // Deliberately skipped: Middle Name, Preferred Name, Division (region/brand grouping),
+        // Hire Date (no Simplifi field), Pay Rate (may be an annual salary), SSN/IRD, DOB, gender.
+      };
+    },
+    banner: 'Location is used as the Department — combined locations such as "Milford Merchant/Mi Piaci" become both departments. Employment Status sets Is Active (Terminated = inactive). Middle Name, Division and Hire Date are skipped.',
   }
 ];
 function detectPreset(headers) {
   const set = new Set(headers);
-  return PRESETS.find(p => p.signature.filter(s => set.has(s)).length >= Math.ceil(p.signature.length * 0.75)) || null;
+  return PRESETS.find(p => p.signature.filter(s => set.has(s)).length >= (p.minMatch || Math.ceil(p.signature.length * 0.75))) || null;
 }
+function presetMap(preset) { return typeof preset.map === 'function' ? preset.map(csvHeaders) : preset.map; }
 
 // Built-in header synonyms for files without a preset
 const SYNONYMS = {
@@ -1151,8 +1202,9 @@ function applyHeaderRow(headerIdx, rawRows, fileName, wasAutoDetectedSkip) {
   if (activePreset) {
     setProviderButton(activePreset.id);
     showStatus(`✓ ${csvRows.length} employees loaded from "${fileName}" — ${activePreset.name} detected`, 'success');
-  } else if (selectedProvider === 'ims-myob') {
-    showStatus(`"${fileName}" loaded, but it doesn't look like a standard IMS employee export. Columns will be matched by name — please check the mapping carefully.`, 'warn');
+  } else if (selectedProvider !== 'other') {
+    const p = PRESETS.find(x => x.id === selectedProvider);
+    showStatus(`"${fileName}" loaded, but it doesn't look like a standard ${p ? p.name : 'export'}. Columns will be matched by name — please check the mapping carefully.`, 'warn');
   } else {
     showStatus(`✓ ${csvRows.length} rows loaded from "${fileName}"`, 'success');
   }
@@ -1202,8 +1254,9 @@ document.getElementById('btnToMapping').onclick = () => { runMapping(); goToPane
 function runMapping() {
   const preset = activePreset;
   if (preset) {
+    const pmap = presetMap(preset);
     mappings = csvHeaders.map(h => {
-      const p = preset.map[h];
+      const p = pmap[h];
       return p ? { sourceCol: h, targetCol: p[0], confidence: p[1] } : { sourceCol: h, targetCol: null, confidence: 'high' };
     });
     mappingSource = 'preset:' + preset.name;
@@ -1218,7 +1271,7 @@ function runMapping() {
   const banner = document.getElementById('mappingSourceNote');
   if (preset) {
     banner.className = 'info-box success';
-    banner.innerHTML = `✅ Recognised an <strong>${esc(preset.name)}</strong> — the standard mapping has been applied. Sensitive columns (IRD number, bank account, birth date, gender, KiwiSaver) are skipped. Leave balances are set up in the next step. Check any amber rows before continuing.`;
+    banner.innerHTML = `✅ Recognised ${preset.article || 'an'} <strong>${esc(preset.name)}</strong> — the standard mapping has been applied. ${esc(preset.banner || '')} Check any amber rows before continuing.`;
   } else {
     banner.className = 'info-box warn';
     banner.innerHTML = `⚠ Columns were matched by name. Anything not recognised is skipped — go through the list and map any columns Simplifi needs.`;
@@ -1445,6 +1498,24 @@ function splitTownPostcode(val) {     // "HAWERA, 4610" → ["Hawera", "4610"]
   const town = m ? m[1] : String(val).trim();
   return [town === town.toUpperCase() ? titleCase(town) : town, m ? m[2] : ''];
 }
+function splitDepartments(val, known = new Set()) {    // "Lambton Quay Merchant/Mi Piaci" → ["Lambton Quay Merchant", "Lambton Quay Mi Piaci"]
+  const parts = String(val).split('/').map(x => x.trim()).filter(Boolean);
+  if (parts.length < 2) return parts;
+  const base = parts[0].split(/\s+/);
+  const outList = parts.map((p, i) => {
+    if (i === 0) return p;
+    const w = p.split(/\s+/);
+    const expanded = [...base.slice(0, -1), p].join(' ');
+    // Prefer names that appear elsewhere in the same column
+    if (known.has(p)) return p;
+    if (known.has(expanded)) return expanded;
+    // Otherwise a part that doesn't repeat the site name swaps out the last word of the first part
+    if (base.length > 1 && w.length <= base.length && w[0].toLowerCase() !== base[0].toLowerCase()) return expanded;
+    return p;
+  });
+  return [...new Set(outList)];
+}
+const INACTIVE_STATUS_RE = /\b(terminated|inactive|resigned|former|ended|deceased|dismissed)\b/i;
 function parseDMY(val) {
   const m = String(val).trim().match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
   return m ? new Date(+m[3], +m[2] - 1, +m[1]) : null;
@@ -1468,6 +1539,8 @@ function buildOutputRows() {
   const activeMappings = mappings.filter(m => m.targetCol && m.targetCol !== 'LEAVE_BALANCE');
   const leaveMaps = doLeave ? mappings.filter(m => m.targetCol === 'LEAVE_BALANCE') : [];
   const headerSet = new Set();
+  const knownValues = {};   // source column → Set of its whole values (for SPLIT_DEPARTMENTS)
+  const known = col => knownValues[col] || (knownValues[col] = new Set(csvRows.map(r => String(r[col] ?? '').trim()).filter(v => v && !v.includes('/'))));
 
   const staff = csvRows.map(row => {
     const out = {};
@@ -1492,7 +1565,19 @@ function buildOutputRows() {
         const today = new Date(); today.setHours(0,0,0,0);
         put('Pay Roll - Last Date Employment', val ? normaliseDate(val) : '');
         headerSet.add('Is Active Employee');
-        out['Is Active Employee'] = (d && d < today) ? 'FALSE' : 'TRUE';
+        if (d && d < today) out['Is Active Employee'] = 'FALSE';
+        else if (!out['Is Active Employee']) out['Is Active Employee'] = 'TRUE';
+        return;
+      }
+      if (m.targetCol === 'EMPLOYMENT_STATUS') {
+        headerSet.add('Is Active Employee');
+        if (INACTIVE_STATUS_RE.test(val)) out['Is Active Employee'] = 'FALSE';
+        else if (val && !out['Is Active Employee']) out['Is Active Employee'] = 'TRUE';
+        return;
+      }
+      if (m.targetCol === 'SPLIT_DEPARTMENTS') {
+        headerSet.add('Department');
+        if (val) put('Department', splitDepartments(val, known(m.sourceCol)).join('|'));
         return;
       }
       if (m.targetCol === 'SPLIT_NAME') {
@@ -1535,15 +1620,16 @@ function buildOutputRows() {
     return { out, leave, marker: row.__marker };
   });
 
-  // Exclude leavers: last-employment date today or earlier, or (IMS) no "+" active marker
+  // Exclude leavers: last-employment date today or earlier, marked inactive/terminated, or (IMS) no "+" active marker
   excludedLeavers = 0;
   let kept = staff;
   if (optEnabled('opt-leavers')) {
     const today = new Date(); today.setHours(0,0,0,0);
-    const useMarker = !!activePreset && staff.filter(s => s.marker === '+').length >= staff.length * 0.5;
+    const useMarker = !!activePreset && activePreset.id === 'ims-myob' && staff.filter(s => s.marker === '+').length >= staff.length * 0.5;
     kept = staff.filter(s => {
       const d = parseDMY(normaliseDate(s.out['Pay Roll - Last Date Employment'] || ''));
       if (d && d <= today) return false;
+      if (s.out['Is Active Employee'] === 'FALSE') return false;
       if (useMarker && s.marker !== '+') return false;
       return true;
     });
@@ -1705,7 +1791,11 @@ function runValidation() {
 
   // File-level notices
   const notices = [];
-  if (excludedLeavers) notices.push({ sev: 'info', msg: `${excludedLeavers} leaver${excludedLeavers!==1?'s':''} excluded (finish date today or earlier, or inactive in IMS).` });
+  if (excludedLeavers) notices.push({ sev: 'info', msg: `${excludedLeavers} leaver${excludedLeavers!==1?'s':''} excluded (finish date today or earlier, or marked inactive/terminated).` });
+  if (outputRows.length && !usedHeaders.includes('Employee Code'))
+    notices.push({ sev: 'warn', msg: activePreset && activePreset.id === 'bamboohr'
+      ? 'No Employee Code in this file — add the "Employee #" field to the BambooHR report so staff can be matched to payroll and leave balances can be imported.'
+      : 'No column is mapped to Employee Code — staff can\'t be matched to payroll and leave balances can\'t be imported without it.' });
   if (optEnabled('opt-leave')) leaveIssues().forEach(i => notices.push({ sev: i.sev === 'error' ? 'error' : 'warn', msg: i.msg }));
   if (leaveNoCode) notices.push({ sev: 'warn', msg: `${leaveNoCode} staff member${leaveNoCode!==1?'s are':' is'} left out of the leave file because they have no Employee Code.` });
   const badBal = leaveBadCells();
@@ -1888,7 +1978,7 @@ function sanitiseSetup(obj) {
     version: Number(obj.version) || 1,
     name: str(obj.name).slice(0, 60) || 'Unnamed setup',
     savedAt: str(obj.savedAt),
-    provider: ['ims-myob','other'].includes(obj.provider) ? obj.provider : 'other',
+    provider: ['ims-myob','bamboohr','other'].includes(obj.provider) ? obj.provider : 'other',
     headers: Array.isArray(obj.headers) ? obj.headers.filter(h => typeof h === 'string').slice(0, 1000) : [],
     mappings: {}, leaveCodes: {}, options: {},
     rateDateMode: obj.rateDateMode === 'fixed' ? 'fixed' : 'today',
@@ -1998,7 +2088,7 @@ function showSaveStatus(msg, type) {
 function prefillSetupName() {
   const inp = document.getElementById('setupName');
   if (inp.value.trim()) return;
-  inp.value = appliedSetupName || (activePreset ? activePreset.name.replace(/ employee export$/i, '') + ' — ' : '') +
+  inp.value = appliedSetupName || (activePreset ? activePreset.name.replace(/ employee (export|report)$/i, '') + ' — ' : '') +
     String(window._loadedFileName || '').replace(/\.(csv|xlsx|xls)$/i, '');
   inp.value = inp.value.slice(0, 60);
 }
